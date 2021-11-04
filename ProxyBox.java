@@ -28,7 +28,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-class hjUDPproxy {
+class ProxyBox {
     public static void main(String[] args) throws Exception {
         InputStream inputStream = new FileInputStream("config.properties");
         Properties properties = new Properties();
