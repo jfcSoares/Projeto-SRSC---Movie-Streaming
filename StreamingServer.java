@@ -1,13 +1,13 @@
 /*
-* hjStreamServer.java 
+* StreamingServer.java 
 * Streaming server: streams video frames in UDP packets
-* for clients to play in real time the transmitted movies
+* for clients to play the transmitted movies in real time 
 */
 
 import java.io.*;
 import java.net.*;
 
-class hjStreamServer {
+class StreamingServer {
 
 	static public void main(String[] args) throws Exception {
 		if (args.length != 3) {
