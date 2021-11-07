@@ -1,88 +1,177 @@
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
-import java.net.SocketAddress;
-import java.net.SocketException;
-import java.security.Key;
-import java.security.SecureRandom;
+
+import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.KeyStore.PasswordProtection;
+
+import java.util.Base64;
 
 import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
 import javax.crypto.Mac;
+import javax.crypto.SecretKey;
 import javax.crypto.spec.IvParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
-
-import utils.CryptoUtils;
 
 public class SRTSPDatagramSocket extends DatagramSocket {
 
+    private static final String keyStoreFile = "CipherMovies.config";
+    private static final String cipherInstance = "AES/GCM/NoPadding";
+
     private InetSocketAddress address;
-    private Cipher cipher;
-    private SecureRandom random;
-    private IvParameterSpec ivSpec;
-    private Key key;
-    private Mac hMac;
-    private Key hMacKey;
-    private int ctLength;
+    private KeyStore keystore;
+    private byte[] ivBytes;
 
-    public SRTSPDatagramSocket(InetSocketAddress bindaddr) throws SocketException {
-        super(bindaddr);
-        address = bindaddr;
-        try {
-            cipher = Cipher.getInstance("AES/ECB/NoPadding", "SunJCE");
-            random = new SecureRandom();
-            ivSpec = CryptoUtils.createCtrIvForAES(1, random);
-            key = CryptoUtils.createKeyForAES(256, random);
-            hMac = Mac.getInstance("HmacSHA512");
-            hMacKey = new SecretKeySpec(key.getEncoded(), "HmacSHA512");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
+    public SRTSPDatagramSocket() throws Exception {
+        super();
+        this.keystore = createKeyStore(keyStoreFile, "123");
+        generateKey();
+        ivBytes = new byte[] { 0x00, 0x00, 0x00, 0x01, 0x04, 0x05, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x01 };
     }
 
+    public SRTSPDatagramSocket(InetSocketAddress bindaddr) throws Exception {
+        super(bindaddr);
+        this.address = bindaddr;
+        this.keystore = createKeyStore(keyStoreFile, "123");
+        generateKey();
+        ivBytes = new byte[] { 0x00, 0x00, 0x00, 0x01, 0x04, 0x05, 0x06, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x01 };
+    }
+
+    /**
+     * Either sends, encryting the received data
+     * 
+     * @param packet: the original Packet carrying the data
+     */
     public void sendEncrypted(DatagramPacket packet) {
-        // SecretKeySpec key = new SecretKeySpec(packet.getData(), "AES");
-        byte[] encrypted = new byte[4096];
+        byte[] input = packet.getData();
+
         try {
+            Cipher cipher = Cipher.getInstance(cipherInstance, "BC");
+            SecretKey encryptionKey = getPrivateKey();
+            SecretKey hMacKey = getMacKey();
+            Mac hMac = Mac.getInstance("HmacSHA512");
 
-            // **** Initiates encryption ****//
-            cipher.init(Cipher.ENCRYPT_MODE, key, ivSpec);
-            byte[] input = packet.getData();
-            byte[] cypherText = new byte[input.length + hMac.getMacLength()];
+            // Encrypts the packet data
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, new IvParameterSpec(ivBytes));
+            byte[] cipherText = new byte[cipher.getOutputSize(input.length) + 1000];
+            int ctLength = cipher.update(input, 0, input.length, cipherText, 0);
 
-            ctLength = cipher.update(input, 0, input.length, cypherText, 0);
             hMac.init(hMacKey);
             hMac.update(input);
+            ctLength += cipher.doFinal(hMac.doFinal(), 0, hMac.getMacLength(), cipherText, ctLength);
 
-            ctLength += cipher.doFinal(hMac.doFinal(), 0, hMac.getMacLength(), cypherText, ctLength);
-            encrypted = hMac.doFinal(); // Not sure se e assim
-
-            // Sends a refurbished packet with encrypted data
-            DatagramPacket p = new DatagramPacket(encrypted, encrypted.length, address);
+            // Send a new packet with an encrypted frame of the movie
+            DatagramPacket p = new DatagramPacket(cipherText, cipherText.length, packet.getSocketAddress());
             this.send(p);
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    public void receive(DatagramPacket packet) {
+    public void receiveEncrypted(DatagramPacket packet) {
+        byte[] input = packet.getData();
 
         try {
-            // **** Initiates decryption ****//
-            cipher.init(Cipher.DECRYPT_MODE, key, ivSpec);
+            Cipher cipher = Cipher.getInstance(cipherInstance, "BC");
+            SecretKey encryptionKey = getPrivateKey();
+            SecretKey hMacKey = getMacKey();
+            Mac hMac = Mac.getInstance("HmacSHA512");
 
-            byte[] originalData = cipher.doFinal(packet.getData(), 0, ctLength);
-            int messageLength = originalData.length - hMac.getMacLength();
+            // Decrypts the packet data
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, new IvParameterSpec(ivBytes));
+            byte[] plainText = cipher.doFinal(input);
+            int messageLength = plainText.length - hMac.getMacLength();
 
             hMac.init(hMacKey);
-            hMac.update(originalData, 0, messageLength);
+            hMac.update(plainText, 0, messageLength);
 
-            DatagramPacket p = new DatagramPacket(originalData, originalData.length, packet.getSocketAddress());
-            this.receive(p);
+            byte[] messageHash = new byte[hMac.getMacLength()];
+            System.arraycopy(plainText, messageLength, messageHash, 0, messageHash.length);
+
+            // Verifies message integrity
+            if (MessageDigest.isEqual(hMac.doFinal(), messageHash)) {
+                // Receives a new packet with an encrypted frame of the movie
+                DatagramPacket p = new DatagramPacket(plainText, plainText.length, address);
+                this.receive(p);
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
-
     }
 
+    // *** METODOS AUXILIARES ***/
+
+    private static KeyStore createKeyStore(String fileName, String pw) throws Exception {
+        File file = new File(fileName);
+
+        // PKCS12 OR JCEKS?
+        final KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        if (file.exists() && file != null) {
+            // .keystore file already exists => load it
+            keyStore.load(new FileInputStream(file), pw.toCharArray());
+        } else {
+            // .keystore file not created yet => create it
+            keyStore.load(null, null);
+            keyStore.store(new FileOutputStream(fileName), pw.toCharArray());
+        }
+
+        return keyStore;
+    }
+
+    /**
+     * Generates and stores a secret encryption key
+     * 
+     * @throws Exception
+     */
+    private void generateKey() throws Exception {
+        // generate a secret key for AES encryption
+        SecretKey secretKey = KeyGenerator.getInstance("AES").generateKey();
+        System.out.println("Stored Key: " + Base64.getEncoder().encodeToString(secretKey.getEncoded()));
+
+        // store the secret key
+        KeyStore.SecretKeyEntry keyStoreEntry = new KeyStore.SecretKeyEntry(secretKey);
+        PasswordProtection keyPassword = new PasswordProtection("pw-secret".toCharArray());
+        keystore.setEntry("mySecretKey", keyStoreEntry, keyPassword);
+        keystore.store(new FileOutputStream(keyStoreFile), "123".toCharArray());
+
+        // generate a secret Mac key
+        SecretKey hMacKey = KeyGenerator.getInstance("HmacSHA512").generateKey();
+
+        // store the secret Mac key
+        KeyStore.SecretKeyEntry macKeyStoreEntry = new KeyStore.SecretKeyEntry(hMacKey);
+        PasswordProtection macPassword = new PasswordProtection("mac-secret".toCharArray());
+        keystore.setEntry("mySecretMacKey", macKeyStoreEntry, macPassword);
+        keystore.store(new FileOutputStream(keyStoreFile), "123".toCharArray());
+    }
+
+    /**
+     * Obtains an existing secret key from the keystore
+     * 
+     * @return
+     * @throws Exception
+     */
+    private SecretKey getPrivateKey() throws Exception {
+        // retrieve the stored key back
+
+        PasswordProtection keyPassword = new PasswordProtection("pw-secret".toCharArray());
+        KeyStore.Entry entry = keystore.getEntry("mySecretKey", keyPassword);
+        SecretKey keyFound = ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+        return keyFound;
+    }
+
+    private SecretKey getMacKey() throws Exception {
+        // retrieve the stored Mac key back
+
+        PasswordProtection keyPassword = new PasswordProtection("mac-secret".toCharArray());
+        KeyStore.Entry entry = keystore.getEntry("mySecretMacKey", keyPassword);
+        SecretKey keyFound = ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+        return keyFound;
+    }
 }
