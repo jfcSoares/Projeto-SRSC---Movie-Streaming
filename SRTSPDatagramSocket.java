@@ -30,6 +30,7 @@ public class SRTSPDatagramSocket extends DatagramSocket {
     private KeyStore keystore;
     private SecureRandom random;
     private Mac hmac;
+    private Integer bufSize;
 
     public SRTSPDatagramSocket() throws Exception {
         super();
@@ -54,9 +55,9 @@ public class SRTSPDatagramSocket extends DatagramSocket {
      * @param Arrays
      * 
      * @param packet: the original Packet carrying the data
-     * @throws AuthenticatedEncryptionException
+     * @throws Exception
      */
-    public void sendEncrypted(DatagramPacket packet) throws AuthenticatedEncryptionException {
+    public void sendEncrypted(DatagramPacket packet) throws Exception {
         byte[] input = packet.getData();
         byte[] cipherText = null;
         byte[] mac = null;
@@ -74,7 +75,6 @@ public class SRTSPDatagramSocket extends DatagramSocket {
 
             // Authenticates the data
             mac = macCipherText(hMacKey, cipherText, iv);
-
             ByteBuffer byteBuffer = ByteBuffer.allocate(1 + iv.length + 1 + mac.length + cipherText.length);
             byteBuffer.put((byte) iv.length);
             byteBuffer.put(iv);
@@ -84,10 +84,12 @@ public class SRTSPDatagramSocket extends DatagramSocket {
 
             // collect the full cipherText
             byte[] cipherMessage = byteBuffer.array();
+            bufSize = cipherMessage.length;
+            System.out.println(cipherMessage + " + " + bufSize);
 
             // sends a new packet with the encrypted and authenticated data
-            DatagramPacket p = new DatagramPacket(cipherMessage, cipherMessage.length, packet.getSocketAddress());
-            this.send(p);
+            DatagramPacket p = new DatagramPacket(cipherMessage, bufSize, packet.getSocketAddress());
+            send(p);
         } catch (Exception e) {
             throw new AuthenticatedEncryptionException("Could not encrypt", e);
         } finally {
@@ -100,9 +102,8 @@ public class SRTSPDatagramSocket extends DatagramSocket {
 
     public byte[] decryptData(byte[] encryptedData) throws Exception {
         /** Separates the data received into all the algorithm parameters **/
-
+        // System.out.println(encryptedData);
         ByteBuffer byteBuffer = ByteBuffer.wrap(encryptedData);
-
         int ivLength = (byteBuffer.get());
 
         if (ivLength != 16) { // check input parameter
@@ -121,11 +122,11 @@ public class SRTSPDatagramSocket extends DatagramSocket {
         byte[] cipherText = new byte[byteBuffer.remaining()];
         byteBuffer.get(cipherText);
 
-        /** Separates the data received into all the algorithm parameters **/
-
         // Checks MAC integrity
         SecretKey macKey = getMacKey();
         verifyMac(macKey, iv, mac, cipherText);
+
+        // System.out.println(encryptedData + " FUCK");
 
         // Decrypts data
         final Cipher cipherDec = Cipher.getInstance(ALGORITHM, "BC");
@@ -134,6 +135,12 @@ public class SRTSPDatagramSocket extends DatagramSocket {
         byte[] plainText = cipherDec.doFinal(cipherText);
         return plainText;
 
+    }
+
+    // Returns the required buffer size to receive the encrypted and MAC'ed packet
+    // data
+    public Integer getBufSize() {
+        return bufSize;
     }
 
     // *** AUXILIARY METHODS ***/

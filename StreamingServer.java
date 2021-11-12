@@ -40,8 +40,8 @@ class StreamingServer {
 			long t = System.nanoTime();
 			Thread.sleep(Math.max(0, ((time - q0) - (t - t0)) / 1000000));
 
-			// send packet (with a frame payload)
-			// Frames sent in clear (no encryption)
+			// send packet (with a frame payload), Frames sent with AES encryption and HMAC
+			// authentication
 			s.sendEncrypted(p);
 			System.out.print(".");
 		}
