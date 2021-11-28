@@ -68,6 +68,8 @@ public class SRTSPDatagramSocket extends DatagramSocket {
      */
     public void sendEncrypted(DatagramPacket packet) throws Exception {
         byte[] input = packet.getData();
+        System.out.println("plain: " + Utils.toHex(input, input.length) + " bytes: " + input.length);
+        System.out.println("---------------------------------------------------------------------");
         
         try {
 
@@ -96,8 +98,8 @@ public class SRTSPDatagramSocket extends DatagramSocket {
             byte[] cipherMessage = byteBuffer.array();
             bufSize = cipherMessage.length;
 
-             System.out.println("iv: " + Utils.toHex(iv, iv.length) + " bytes: " + iv.length + " " + (byte) 16);
-            System.out.println("CIFRA FINAL (SERVER): " + Utils.toHex(cipherMessage, bufSize) + " bytes: " + bufSize + " cypherLenLen " + cypherLenLen);
+            //System.out.println("iv: " + Utils.toHex(iv, iv.length) + " bytes: " + iv.length + " " + (byte) 16);
+            //System.out.println("CIFRA FINAL (SERVER): " + Utils.toHex(cipherMessage, bufSize) + " bytes: " + bufSize + " cypherLenLen " + cypherLenLen);
             //System.out.println("---------------------------------------------------------------------");
             
 
@@ -118,20 +120,20 @@ public class SRTSPDatagramSocket extends DatagramSocket {
         // Separate the received data
         byte[] ivLength = new byte[1];
         System.arraycopy(encryptedData, 0, ivLength, 0, ivLength.length);
-        System.out.println("DECRYPTION ivLength: " + Integer.parseInt(Utils.toHex(ivLength, ivLength.length),16) + " bytes: " + ivLength.length);
+        //System.out.println("DECRYPTION ivLength: " + Integer.parseInt(Utils.toHex(ivLength, ivLength.length),16) + " bytes: " + ivLength.length);
 
         // Separate the received data
         byte[] cypherLenLen = new byte[1];
         System.arraycopy(encryptedData, 1, cypherLenLen, 0, cypherLenLen.length);
-        System.out.println("DECRYPTION cypherLengthLenght: " + Utils.toHex(cypherLenLen, cypherLenLen.length)  + " bytes: " + cypherLenLen.length);
+        //System.out.println("DECRYPTION cypherLengthLenght: " + Utils.toHex(cypherLenLen, cypherLenLen.length)  + " bytes: " + cypherLenLen.length);
           
         byte[] iv = new byte[Integer.parseInt(Utils.toHex(ivLength, ivLength.length),16)];
         System.arraycopy(encryptedData, 2, iv, 0, iv.length);
-        System.out.println("DECRYPTION iv: " + Utils.toHex(iv, iv.length) + " bytes: " + iv.length);
+        //System.out.println("DECRYPTION iv: " + Utils.toHex(iv, iv.length) + " bytes: " + iv.length);
 
         byte[] cipherText = new byte[encryptedData.length - ivLength.length - iv.length - cypherLenLen.length];
         System.arraycopy(encryptedData, ivLength.length + iv.length + cypherLenLen.length, cipherText, 0, cipherText.length);
-        System.out.println("DECRYPTION cipherText: " + Utils.toHex(cipherText, cipherText.length) + " bytes: " + cipherText.length);
+        //System.out.println("DECRYPTION cipherText: " + Utils.toHex(cipherText, cipherText.length) + " bytes: " + cipherText.length);
 
 
         Cipher cipher = Cipher.getInstance(ALGORITHM);
@@ -143,50 +145,9 @@ public class SRTSPDatagramSocket extends DatagramSocket {
         ptLength += cipher.doFinal(plainText1, ptLength);
         System.out.println("DESENCRIPTADA (PROXY) : " + Utils.toHex(plainText1, ptLength) + " bytes: " + ptLength);
 
-        //tamanho da cifra
-        /*byte[] plainText1 = new byte[4096 + Integer.parseInt(Utils.toHex(cypherLenLen, cypherLenLen.length),16)];
-        System.out.println("size " + plainText1.length);
-        int ptLength = cipher.update(cipherText, cipherText.length - plainText1.length, plainText1.length, plainText1, 0);
-        System.out.println("DESENCRIPTADA (PROXY) : " + Utils.toHex(plainText1, ptLength) + " bytes: " + ptLength);*/
         
-        //cifra
-        /*
-
-
-        /*byte[] lenCypher = new byte[cypherLenLen[0]];
-        System.arraycopy(encryptedData, encryptedData.length - lenCypher.length - cypherLenLen.length,  lenCypher, 0, lenCypher.length);
-        System.out.println("DECRYPTION cypherLenght: " + Utils.toHex(lenCypher, lenCypher.length) + " bytes: " + lenCypher.length + " " + lenCypher[0]);
-        */
         System.out.println("---------------------------------------------------------------------");
-        return plainText1; /*
-        ();
-
-        /*
-            byte[] encrypted = new byte[byteBuffer.remaining()];
-            byteBuffer.get(encrypted);
-        byte[] iv = new byte[50];
-        System.arraycopy(encryptedData, 4162-(4162-4112), iv, 0, iv.length);
-
-        byte[] cipherText = new byte[encryptedData.length - (4162-4112)];
-        System.arraycopy(encryptedData, 0, cipherText, 0, cipherText.length);
-        //System.out.println("DECRYPTION cipher: " + Utils.toHex(cipherText, cipherText.length) + " bytes: " + cipherText.length);
-        //System.out.println("DECRYPTION iv: " + Utils.toHex(iv, iv.length) + " bytes: " + iv.length);
-        
-        
-
-        /*cipher.init(Cipher.DECRYPT_MODE, key, ivSpec);
-        byte[] plainText = new byte[cipher.getOutputSize(ctLength)];
-        int ptLength = cipher.update(cipherText, 0, ctLength, plainText, 0);
-        ptLength += cipher.doFinal(plainText, ptLength);
-        System.out.println("plain : " + Utils.toHex(plainText, ptLength) + " bytes: " + ptLength);
-
-        // Decrypts data
-        final Cipher cipherDec = Cipher.getInstance(ALGORITHM, "BC");
-        SecretKey decryptKey = getPrivateKey();
-        cipherDec.init(Cipher.DECRYPT_MODE, decryptKey, new IvParameterSpec(iv));
-        byte[] plainText = cipherDec.doFinal(cipherText);
-        return plainText;*/
-
+        return plainText1;
     }
 
     // Returns the required buffer size to receive the encrypted and MAC'ed packet
