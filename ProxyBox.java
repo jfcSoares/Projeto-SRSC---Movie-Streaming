@@ -41,7 +41,7 @@ class ProxyBox {
 
         SRTSPDatagramSocket inSocket = new SRTSPDatagramSocket(inSocketAddress);
         SRTSPDatagramSocket outSocket = new SRTSPDatagramSocket();
-        byte[] buffer = new byte[4162];
+        byte[] buffer = new byte[4 * 1024 + 34];
 
         // generates key for symmetric encryption
         inSocket.generateKeys();

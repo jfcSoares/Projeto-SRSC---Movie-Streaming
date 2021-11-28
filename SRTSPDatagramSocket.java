@@ -1,4 +1,3 @@
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -12,21 +11,31 @@ import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.KeyStore.PasswordProtection;
+import java.security.spec.AlgorithmParameterSpec;
 import java.util.Base64;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.Mac;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.IvParameterSpec;
+
+import utils.Utils;
 
 public class SRTSPDatagramSocket extends DatagramSocket {
 
     private static final String keyStoreFile = "CipherMovies.config";
-    private static final String ALGORITHM = "AES/CBC/PKCS5Padding";
+    private static final String ALGORITHM = "AES/GCM/NoPadding";
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final int IV_LENGTH_BYTE = 16;
 
+    byte[] ivBytes = new byte[] { 
+	    0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x00, 0x01,
+	    0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x00, 0x01
+	};
+
+    private AlgorithmParameterSpec iv;
     private KeyStore keystore;
     private SecureRandom random;
     private Mac hmac;
@@ -59,33 +68,38 @@ public class SRTSPDatagramSocket extends DatagramSocket {
      */
     public void sendEncrypted(DatagramPacket packet) throws Exception {
         byte[] input = packet.getData();
-        byte[] cipherText = null;
-        byte[] mac = null;
-        byte[] iv = new byte[IV_LENGTH_BYTE];
-        random.nextBytes(iv);
-
+        
         try {
-            Cipher cipher = Cipher.getInstance(ALGORITHM, "BC");
+
+            byte[] iv = new byte[IV_LENGTH_BYTE];
+            random.nextBytes(iv);
+            Cipher cipher = Cipher.getInstance(ALGORITHM);
             SecretKey encryptionKey = getPrivateKey();
-            SecretKey hMacKey = getMacKey();
+
 
             // Encrypts the packet data
-            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, new IvParameterSpec(iv));
-            cipherText = cipher.doFinal(input);
-
-            // Authenticates the data
-            mac = macCipherText(hMacKey, cipherText, iv);
-            ByteBuffer byteBuffer = ByteBuffer.allocate(1 + iv.length + 1 + mac.length + cipherText.length);
-            byteBuffer.put((byte) iv.length);
-            byteBuffer.put(iv);
-            byteBuffer.put((byte) mac.length);
-            byteBuffer.put(mac);
-            byteBuffer.put(cipherText);
-
-            // collect the full cipherText
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, new GCMParameterSpec(128, iv));
+            byte[] cipherText = new byte[cipher.getOutputSize(input.length)];
+            int ctLength = cipher.update(input, 0, input.length, cipherText, 0);
+            ctLength += cipher.doFinal(cipherText, ctLength);
+            int cypherLenLen = ctLength - input.length;
+            //System.out.println("plain: " + Utils.toHex(input, input.length) + " bytes: " + input.length + " " + cypherLenLen);
+            //System.out.println("---------------------------------------------------------------------");
+            //System.out.println("cipher: " + Utils.toHex(cipherText, ctLength) + " bytes: " + ctLength + " " + cypherLenLen);
+            //System.out.println("---------------------------------------------------------------------");
+            
+            ByteBuffer byteBuffer = ByteBuffer.allocate(1 + iv.length + cipherText.length + 1);           
+            byteBuffer.put((byte) cypherLenLen);  //tamanho do tamanho da cifra
+            byteBuffer.put((byte) iv.length); //tamanho do iv
+            byteBuffer.put(iv); //iv
+            byteBuffer.put(cipherText); //cifra + tamanho da cifra
             byte[] cipherMessage = byteBuffer.array();
             bufSize = cipherMessage.length;
-            System.out.println(cipherMessage + " + " + bufSize);
+
+             System.out.println("iv: " + Utils.toHex(iv, iv.length) + " bytes: " + iv.length + " " + (byte) 16);
+            System.out.println("CIFRA FINAL (SERVER): " + Utils.toHex(cipherMessage, bufSize) + " bytes: " + bufSize + " cypherLenLen " + cypherLenLen);
+            //System.out.println("---------------------------------------------------------------------");
+            
 
             // sends a new packet with the encrypted and authenticated data
             DatagramPacket p = new DatagramPacket(cipherMessage, bufSize, packet.getSocketAddress());
@@ -93,47 +107,85 @@ public class SRTSPDatagramSocket extends DatagramSocket {
         } catch (Exception e) {
             throw new AuthenticatedEncryptionException("Could not encrypt", e);
         } finally {
-            // Release auxiliary vectors memory
-            java.util.Arrays.fill(iv, (byte) 0);
-            java.util.Arrays.fill(cipherText, (byte) 0);
-            java.util.Arrays.fill(mac, (byte) 0);
+           
         }
     }
 
     public byte[] decryptData(byte[] encryptedData) throws Exception {
-        /** Separates the data received into all the algorithm parameters **/
-        // System.out.println(encryptedData);
-        ByteBuffer byteBuffer = ByteBuffer.wrap(encryptedData);
-        int ivLength = (byteBuffer.get());
 
-        if (ivLength != 16) { // check input parameter
-            throw new IllegalArgumentException("invalid iv length");
-        }
-        byte[] iv = new byte[ivLength];
-        byteBuffer.get(iv);
+        //System.out.println("CIFRA ENCRIPTADA (PROXY) : " + Utils.toHex(encryptedData, encryptedData.length) + " bytes: " + encryptedData.length);
 
-        int macLength = (byteBuffer.get());
-        if (macLength != 32) { // check input parameter
-            throw new IllegalArgumentException("invalid mac length");
-        }
-        byte[] mac = new byte[macLength];
-        byteBuffer.get(mac);
+        // Separate the received data
+        byte[] ivLength = new byte[1];
+        System.arraycopy(encryptedData, 0, ivLength, 0, ivLength.length);
+        System.out.println("DECRYPTION ivLength: " + Integer.parseInt(Utils.toHex(ivLength, ivLength.length),16) + " bytes: " + ivLength.length);
 
-        byte[] cipherText = new byte[byteBuffer.remaining()];
-        byteBuffer.get(cipherText);
+        // Separate the received data
+        byte[] cypherLenLen = new byte[1];
+        System.arraycopy(encryptedData, 1, cypherLenLen, 0, cypherLenLen.length);
+        System.out.println("DECRYPTION cypherLengthLenght: " + Utils.toHex(cypherLenLen, cypherLenLen.length)  + " bytes: " + cypherLenLen.length);
+          
+        byte[] iv = new byte[Integer.parseInt(Utils.toHex(ivLength, ivLength.length),16)];
+        System.arraycopy(encryptedData, 2, iv, 0, iv.length);
+        System.out.println("DECRYPTION iv: " + Utils.toHex(iv, iv.length) + " bytes: " + iv.length);
 
-        // Checks MAC integrity
-        SecretKey macKey = getMacKey();
-        verifyMac(macKey, iv, mac, cipherText);
+        byte[] cipherText = new byte[encryptedData.length - ivLength.length - iv.length - cypherLenLen.length];
+        System.arraycopy(encryptedData, ivLength.length + iv.length + cypherLenLen.length, cipherText, 0, cipherText.length);
+        System.out.println("DECRYPTION cipherText: " + Utils.toHex(cipherText, cipherText.length) + " bytes: " + cipherText.length);
 
-        // System.out.println(encryptedData + " FUCK");
+
+        Cipher cipher = Cipher.getInstance(ALGORITHM);
+        SecretKey encryptionKey = getPrivateKey();
+        cipher.init(Cipher.DECRYPT_MODE, encryptionKey, new GCMParameterSpec(128, iv));
+
+        byte[] plainText1 = new byte[cipher.getOutputSize(cipherText.length)];
+        int ptLength = cipher.update(cipherText, 0, cipherText.length, plainText1, 0);
+        ptLength += cipher.doFinal(plainText1, ptLength);
+        System.out.println("DESENCRIPTADA (PROXY) : " + Utils.toHex(plainText1, ptLength) + " bytes: " + ptLength);
+
+        //tamanho da cifra
+        /*byte[] plainText1 = new byte[4096 + Integer.parseInt(Utils.toHex(cypherLenLen, cypherLenLen.length),16)];
+        System.out.println("size " + plainText1.length);
+        int ptLength = cipher.update(cipherText, cipherText.length - plainText1.length, plainText1.length, plainText1, 0);
+        System.out.println("DESENCRIPTADA (PROXY) : " + Utils.toHex(plainText1, ptLength) + " bytes: " + ptLength);*/
+        
+        //cifra
+        /*
+
+
+        /*byte[] lenCypher = new byte[cypherLenLen[0]];
+        System.arraycopy(encryptedData, encryptedData.length - lenCypher.length - cypherLenLen.length,  lenCypher, 0, lenCypher.length);
+        System.out.println("DECRYPTION cypherLenght: " + Utils.toHex(lenCypher, lenCypher.length) + " bytes: " + lenCypher.length + " " + lenCypher[0]);
+        */
+        System.out.println("---------------------------------------------------------------------");
+        return plainText1; /*
+        ();
+
+        /*
+            byte[] encrypted = new byte[byteBuffer.remaining()];
+            byteBuffer.get(encrypted);
+        byte[] iv = new byte[50];
+        System.arraycopy(encryptedData, 4162-(4162-4112), iv, 0, iv.length);
+
+        byte[] cipherText = new byte[encryptedData.length - (4162-4112)];
+        System.arraycopy(encryptedData, 0, cipherText, 0, cipherText.length);
+        //System.out.println("DECRYPTION cipher: " + Utils.toHex(cipherText, cipherText.length) + " bytes: " + cipherText.length);
+        //System.out.println("DECRYPTION iv: " + Utils.toHex(iv, iv.length) + " bytes: " + iv.length);
+        
+        
+
+        /*cipher.init(Cipher.DECRYPT_MODE, key, ivSpec);
+        byte[] plainText = new byte[cipher.getOutputSize(ctLength)];
+        int ptLength = cipher.update(cipherText, 0, ctLength, plainText, 0);
+        ptLength += cipher.doFinal(plainText, ptLength);
+        System.out.println("plain : " + Utils.toHex(plainText, ptLength) + " bytes: " + ptLength);
 
         // Decrypts data
         final Cipher cipherDec = Cipher.getInstance(ALGORITHM, "BC");
         SecretKey decryptKey = getPrivateKey();
         cipherDec.init(Cipher.DECRYPT_MODE, decryptKey, new IvParameterSpec(iv));
         byte[] plainText = cipherDec.doFinal(cipherText);
-        return plainText;
+        return plainText;*/
 
     }
 
