@@ -23,7 +23,7 @@ class StreamingServer {
 		byte[] buff = new byte[4096];
 
 		InetSocketAddress addr = new InetSocketAddress(args[1], Integer.parseInt(args[2]));
-		SRTSPDatagramSocket s = new SRTSPDatagramSocket(addr);
+		SRTSPDatagramSocket s = new SRTSPDatagramSocket();
 		DatagramPacket p = new DatagramPacket(buff, buff.length, addr);
 		long t0 = System.nanoTime(); // tempo de referencia para este processo
 		long q0 = 0;
@@ -41,7 +41,7 @@ class StreamingServer {
 			Thread.sleep(Math.max(0, ((time - q0) - (t - t0)) / 1000000));
 
 			// send packet (with a frame payload)
-			// Frames sent in clear (no encryption)
+			// Frames sent encrypted with AES/GCM/NoPadding algorithm
 			s.sendEncrypted(p);
 			System.out.print(".");
 		}
