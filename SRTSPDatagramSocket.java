@@ -8,18 +8,21 @@ import java.net.SocketAddress;
 import java.security.KeyStore;
 import java.security.SecureRandom;
 import java.security.KeyStore.PasswordProtection;
+import java.util.Arrays;
 import java.util.Base64;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.IvParameterSpec;
 
 public class SRTSPDatagramSocket extends DatagramSocket {
 
     private static final String keyStoreFile = "CipherMovies.config";
     private static final String cipherInstance = "AES/GCM/NoPadding";
-    private static final int IV_LENGTH_BYTE = 16;
+    private static final int IV_LENGTH_BYTE = 12;
+    private static final int TAG_LENGTH_BITS = 128;
 
     private KeyStore keystore;
     private final SecureRandom secureRandom;
@@ -38,7 +41,6 @@ public class SRTSPDatagramSocket extends DatagramSocket {
 
     public void sendEncrypted(DatagramPacket p) throws Exception {
         byte[] encryptedData = encryptPayload(p.getData());
-        System.out.println(encryptedData.length);
         send(new DatagramPacket(encryptedData, encryptedData.length, p.getSocketAddress()));
     }
 
@@ -56,19 +58,16 @@ public class SRTSPDatagramSocket extends DatagramSocket {
             Cipher cipher = Cipher.getInstance(cipherInstance, "BC");
             SecretKey encryptionKey = getPrivateKey();
 
-            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, new IvParameterSpec(iv));
-            iv = cipher.getIV();
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey, new GCMParameterSpec(TAG_LENGTH_BITS, iv));
 
             // Encryption
-            byte[] cipherText = new byte[cipher.getOutputSize(frame.length)];
-            int ctLength = cipher.update(frame, 0, frame.length, cipherText, 0);
-            ctLength += cipher.doFinal(cipherText, ctLength);
+            byte[] cipherText = cipher.doFinal(frame);
+            int ctLength = cipherText.length;
 
             // Prepend iv to cipherText to help decryption
             encryptedData = new byte[iv.length + ctLength];
             System.arraycopy(iv, 0, encryptedData, 0, iv.length);
             System.arraycopy(cipherText, 0, encryptedData, iv.length, ctLength);
-
             return encryptedData;
         } catch (Exception e) {
             e.printStackTrace();
@@ -85,18 +84,16 @@ public class SRTSPDatagramSocket extends DatagramSocket {
 
             // Separate the received data
             byte[] iv = new byte[IV_LENGTH_BYTE];
-            System.arraycopy(encryptedData, 0, iv, 0, iv.length);
+            iv = Arrays.copyOfRange(encryptedData, 0, IV_LENGTH_BYTE);
 
             byte[] cipherText = new byte[encryptedData.length - IV_LENGTH_BYTE];
             System.arraycopy(encryptedData, iv.length, cipherText, 0, cipherText.length);
-            int ctLength = cipherText.length;
 
             // decryption
-            cipher.init(Cipher.DECRYPT_MODE, decryptionKey, new IvParameterSpec(iv));
-            plainText = new byte[cipher.getOutputSize(ctLength)];
-            int ptLength = cipher.update(cipherText, 0, ctLength, plainText, 0);
-            ptLength += cipher.doFinal(plainText, ptLength);
+            cipher.init(Cipher.DECRYPT_MODE, decryptionKey, new GCMParameterSpec(TAG_LENGTH_BITS, iv));
+            plainText = cipher.doFinal(cipherText);
 
+            System.out.println(plainText);
             return plainText;
 
         } catch (Exception e) {
@@ -131,7 +128,9 @@ public class SRTSPDatagramSocket extends DatagramSocket {
      */
     public void generateKey() throws Exception {
         // generate a secret key for AES encryption
-        SecretKey secretKey = KeyGenerator.getInstance("AES").generateKey();
+        KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+        keyGen.init(256); // Defines the size for the AES Key
+        SecretKey secretKey = keyGen.generateKey();
         System.out.println("Stored Key: " + Base64.getEncoder().encodeToString(secretKey.getEncoded()));
 
         // store the secret key

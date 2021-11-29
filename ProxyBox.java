@@ -41,17 +41,19 @@ class ProxyBox {
 
         SRTSPDatagramSocket inSocket = new SRTSPDatagramSocket(inSocketAddress);
         SRTSPDatagramSocket outSocket = new SRTSPDatagramSocket();
-        byte[] buffer = new byte[4128];
+        byte[] buffer = new byte[64000];
 
         inSocket.generateKey();
         while (true) {
             DatagramPacket inPacket = new DatagramPacket(buffer, buffer.length);
             inSocket.receive(inPacket); // if remote is unicast
-            buffer = inSocket.decryptPayload(buffer);
+            byte[] newBuf = new byte[inPacket.getLength()];
+            System.arraycopy(buffer, 0, newBuf, 0, newBuf.length);
+            newBuf = inSocket.decryptPayload(newBuf);
 
             System.out.print("*");
             for (SocketAddress outSocketAddress : outSocketAddressSet) {
-                outSocket.send(new DatagramPacket(buffer, buffer.length, outSocketAddress));
+                outSocket.send(new DatagramPacket(newBuf, newBuf.length, outSocketAddress));
             }
         }
     }
